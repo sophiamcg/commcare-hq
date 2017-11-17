@@ -216,6 +216,7 @@ HQ_APPS = (
     'hqscripts',
     'casexml.apps.case',
     'corehq.apps.casegroups',
+    'corehq.apps.case_migrations',
     'casexml.apps.phone',
     'casexml.apps.stock',
     'corehq.apps.cleanup',
