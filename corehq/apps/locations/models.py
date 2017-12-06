@@ -10,11 +10,11 @@ from django.db import models, transaction
 import jsonfield
 from corehq.form_processor.interfaces.supply import SupplyInterface
 from corehq.form_processor.exceptions import CaseNotFound
-from corehq.apps.commtrack.const import COMMTRACK_USERNAME
 from corehq.apps.domain.models import Domain
+from corehq.apps.locations.adjacencylist import ALModel, ALManager, ALQuerySet
 from corehq.apps.products.models import SQLProduct
 from corehq.toggles import LOCATION_TYPE_STOCK_RATES
-from mptt.models import MPTTModel, TreeForeignKey, TreeManager
+from mptt.models import TreeForeignKey
 
 
 class LocationTypeManager(models.Manager):
@@ -280,11 +280,11 @@ class LocationQueriesMixin(object):
                             models.Q(site_code__icontains=user_input)))
 
 
-class LocationQuerySet(LocationQueriesMixin, models.query.QuerySet):
+class LocationQuerySet(LocationQueriesMixin, ALQuerySet):
     pass
 
 
-class LocationManager(LocationQueriesMixin, TreeManager):
+class LocationManager(LocationQueriesMixin, ALManager):
 
     def get_or_None(self, **kwargs):
         try:
@@ -296,8 +296,8 @@ class LocationManager(LocationQueriesMixin, TreeManager):
         return LocationQuerySet(self.model, using=self._db)
 
     def get_queryset(self):
-        return (self._get_base_queryset()
-                .order_by(self.tree_id_attr, self.left_attr))  # mptt default
+        self._ensure_parameters()
+        return self._get_base_queryset()
 
     def get_from_user_input(self, domain, user_input):
         """
@@ -348,7 +348,7 @@ class OnlyUnarchivedLocationManager(LocationManager):
         return list(self.accessible_to_user(domain, user).location_ids())
 
 
-class SQLLocation(MPTTModel):
+class SQLLocation(ALModel):
     domain = models.CharField(max_length=255, db_index=True)
     name = models.CharField(max_length=255, null=True)
     location_id = models.CharField(max_length=100, db_index=True, unique=True)
@@ -362,6 +362,11 @@ class SQLLocation(MPTTModel):
     latitude = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
     longitude = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
     parent = TreeForeignKey('self', null=True, blank=True, related_name='children', on_delete=models.CASCADE)
+
+    # virtual fields used by CTEQuerySet
+    _cte_node_path = "_al_path"
+    _cte_node_depth = "_al_depth"
+    _cte_node_ordering = "_al_ordering"
 
     # Use getter and setter below to access this value
     # since stocks_all_products can cause an empty list to

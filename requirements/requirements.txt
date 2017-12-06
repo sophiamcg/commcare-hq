@@ -64,6 +64,7 @@ stripe==1.67.0
 django-compressor==2.1
 django-angular==0.7.16
 Pycco==0.5.1
+django-cte-forest==0.2.2,
 django-mptt==0.8.7
 jsonpath-rw==1.4.0
 pip>=6.1.1
