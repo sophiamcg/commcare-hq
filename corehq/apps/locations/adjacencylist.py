@@ -91,9 +91,10 @@ class ALModel(MPTTModel):
 class ALCompiler(CTECompiler):
     # NOTE the "depth" and "path" dynamic columns do not have the same
     # meaning here as in CTECompiler because the WHERE condition is not
-    # bound to the root of the tree: "path" is always NULL; and "depth"
-    # is calculated from the node being queried, which means it has the
-    # opposite meaning for ancestor queries as it does for descendants.
+    # bound to the root of the tree: they are calculated from the
+    # node(s) being queried in the adjacency list WHERE condition.
+    # "path" has the opposite meaning for ancestor queries as it does
+    # for descendants.
 
     ADJACENCY_LIST_SQL = """
     WITH RECURSIVE {cte} ("{pk}", "{path}", "{depth}", "{ordering}") AS (
@@ -101,8 +102,8 @@ class ALCompiler(CTECompiler):
         UNION ALL
         SELECT
             T."{pk}",
-            NULL,
-            {cte}.{depth} + 1,
+            {cte}.{path} || {pk_path},
+            {cte}.{depth} %(depth_op)s 1,
             {cte}.{ordering} || {order}
         FROM {db_table} T
         JOIN {cte} ON %(cte_join_on)s
@@ -111,34 +112,30 @@ class ALCompiler(CTECompiler):
 
     @classmethod
     def generate_sql(cls, connection, query, as_sql):
-        base_query, cte_join_on = get_adjancency_list_base_query(query, connection)
-        base_compiler = base_query.get_compiler(connection=connection)
-        base_sql, base_params = base_compiler.as_sql()
-        cte = cls.ADJACENCY_LIST_SQL % {
-            "base_sql": base_sql,
-            "cte_join_on": cte_join_on,
-        }
+        frags, cte_params = compile_adjancency_list_query(query, connection)
+        cte = cls.ADJACENCY_LIST_SQL % frags
         compiler = type("DynamicALCompiler", (CTECompiler,), {"CTE": cte})
         sql, params = compiler.generate_sql(connection, query, as_sql)
-        # possibly fragile: concatenate base_params with params
-        print(sql, base_params, params)
-        return sql, base_params + params
+        # possibly fragile: concatenate cte_params with params
+        return sql, cte_params + params
 
 
-def get_adjancency_list_base_query(query, connection):
+def compile_adjancency_list_query(query, connection):
     offset = query._adjancency_list_offset
     if isinstance(offset, AncestorOffset):
         cte_join_on = 'T."{pk}" = {cte}."{parent}"'
         offset = offset.value
+        depth_op = '-'
     else:
         cte_join_on = 'T."{parent}" = {cte}."{pk}"'
+        depth_op = '+'
 
-    # SELECT "{pk}", NULL AS "path", 0 AS "depth", {order}
+    # SELECT "{pk}", array[{pk_path}] AS "path", 0 AS "depth", {order}
     # FROM {db_table}
     # WHERE ...
-    order = get_order(query, connection)
+    pk_path, order = get_pk_path_and_order(query, connection)
     base_query = query.model.objects.annotate(**{
-        query.model._cte_node_path: RawSQL('NULL', []),
+        query.model._cte_node_path: RawSQL('array[%s]' % pk_path, []),
     }).annotate(**{
         query.model._cte_node_depth: RawSQL('0', []),
     }).annotate(**{
@@ -163,7 +160,14 @@ def get_adjancency_list_base_query(query, connection):
     else:
         raise ValueError("bad offset: {!r}".format(offset))
 
-    return base_query.query, cte_join_on
+    base_compiler = base_query.query.get_compiler(connection=connection)
+    base_sql, cte_params = base_compiler.as_sql()
+    query_fragments = {
+        "base_sql": base_sql,
+        "depth_op": depth_op,
+        "cte_join_on": cte_join_on,
+    }
+    return query_fragments, cte_params
 
 
 class AncestorOffset(object):
@@ -173,7 +177,7 @@ class AncestorOffset(object):
         self.value = value
 
 
-def get_order(query, connection):
+def get_pk_path_and_order(query, connection):
     """This code was copied from django-cte-forest and slightly modified
 
     Changed table alias used in `maybe_cast` to be the real table name.
@@ -181,6 +185,8 @@ def get_order(query, connection):
     Source:
     https://github.com/matthiask/django-cte-forest/blob/0.2.2/cte_forest/query.py#L355-L401
     """
+    table_name = query.model._meta.db_table
+
     def maybe_cast(field):
         # If the ordering information specified a type to cast to, then use
         # this type immediately, otherwise determine whether a
@@ -199,7 +205,13 @@ def get_order(query, connection):
             else:
                 return '"%s"."%s"' % (table_name, name)
 
-    table_name = query.model._meta.db_table
+    # The primary key is used in the path; in case it is of a custom type,
+    # ensure appropriate casting is performed. This is a very rare
+    # condition, as most types can be used directly in the path, especially
+    # since no other fields with incompatible types are combined (with a
+    # notable exception of VARCHAR types which must be converted to TEXT).
+    pk_path = maybe_cast((query.model._meta.pk.attname,
+                          query.model._cte_node_primary_key_type))
 
     # If no explicit ordering is specified, then use the primary key. If the
     # primary key is used in ordering, and it is of a type which needs
@@ -222,7 +234,7 @@ def get_order(query, connection):
             'array[%s]' % maybe_cast(field)
             for field in query.model._cte_node_order_by
         )
-    return order
+    return pk_path, order
 
 
 # all code below facilitates extending CTECompiler to use different SQL
