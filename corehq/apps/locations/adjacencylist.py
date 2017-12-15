@@ -14,12 +14,58 @@ from django.db.models.expressions import RawSQL
 from django.db.models.query import Q, QuerySet
 from django.db.models.sql import AggregateQuery, DeleteQuery, InsertQuery, UpdateQuery
 from django.db.models.sql.compiler import SQLAggregateCompiler, SQLCompiler
-from mptt.models import MPTTModel
+from mptt.models import MPTTModel  #, TreeManager
 
 
 class ALManager(CTENodeManager):
+#class ALManager(TreeManager)
+#
+#    # the following constants can be removed if subclassing CTENodeManager
+#    # SQL CTE temporary table name.
+#    DEFAULT_TABLE_NAME = 'cte'
+#    DEFAULT_CHILDREN_NAME = 'children'
+#
+#    # Tree traversal semantics.
+#    TREE_TRAVERSAL_NONE = 'none'
+#    TREE_TRAVERSAL_DFS = 'dfs'
+#    TREE_TRAVERSAL_BFS = 'bfs'
+#    TREE_TRAVERSAL_METHODS = (TREE_TRAVERSAL_NONE, TREE_TRAVERSAL_DFS,
+#                              TREE_TRAVERSAL_BFS)
+#    TREE_TRAVERSAL_CHOICES = (
+#        (TREE_TRAVERSAL_NONE, 'none'),
+#        (TREE_TRAVERSAL_DFS, 'depth first search'),
+#        (TREE_TRAVERSAL_BFS, 'breadth first search'),
+#    )
+#    DEFAULT_TREE_TRAVERSAL = TREE_TRAVERSAL_DFS
+#
+#    # Virtual fields.
+#    VIRTUAL_FIELD_DEPTH = 'depth'
+#    VIRTUAL_FIELD_PATH = 'path'
+#    VIRTUAL_FIELD_ORDERING = 'ordering'
+#
+#    # Deletion semantics.
+#    DELETE_METHOD_NONE = 'none'
+#    DELETE_METHOD_PHARAOH = 'pharaoh'
+#    DELETE_METHOD_GRANDMOTHER = 'grandmother'
+#    DELETE_METHOD_MONARCHY = 'monarchy'
+#    DELETE_METHODS = (DELETE_METHOD_NONE, DELETE_METHOD_PHARAOH,
+#                      DELETE_METHOD_GRANDMOTHER, DELETE_METHOD_MONARCHY)
+#    DELETE_METHOD_CHOICES = (
+#        (DELETE_METHOD_NONE, 'none'),
+#        (DELETE_METHOD_PHARAOH, 'pharaoh (all subtree)'),
+#        (DELETE_METHOD_GRANDMOTHER, 'grandmother (move subtree up)'),
+#        (DELETE_METHOD_MONARCHY,
+#         'monarchy (first child becomes subtree root)'),
+#    )
+#    DEFAULT_DELETE_METHOD = DELETE_METHOD_PHARAOH
+#
+#    def _ensure_parameters(self):
+#        ensure = CTENodeManager._ensure_parameters
+#        if six.PY2:
+#            ensure = ensure.__func__
+#        ensure(self)
 
-    def get_ancestors(self, node, include_self=False):
+    def get_ancestors(self, node, include_self=False): # ascending=False removed, check if needed
         """Query node ancestors
 
         :param node: A model instance or a QuerySet or Q object querying
@@ -62,6 +108,73 @@ class ALManager(CTENodeManager):
     get_queryset_ancestors = get_ancestors
     get_queryset_descendants = get_descendants
 
+#    def get_queryset_ancestors(self, queryset, include_self=False):
+#        # order is "ASC"
+#        # returns queryset
+#        # referenced members:
+#        #   .__or__(queryset)  (via | operator)
+#        #   .distinct()
+#        ...
+#
+#    def get_queryset_descendants(self, queryset, include_self=False):
+#        # The MPTT implementation of this method executes the given queryset,
+#        # with additional ordering and limited field list, to get tree metadata
+#        # (tree id, left, right, min, max, parent) for each item in the given
+#        # queryset. It then uses that information to construct a new queryset,
+#        # which is returned by this function.
+#        #
+#        # order is "DESC"
+#        # returns queryset
+#        # referenced members:
+#        #   .prefetch_related('location_type')
+#        #   .__or__(...get_queryset_ancestors(...))  (via | operator)
+#        #   .filter(location_type__...)
+#        #   .accessible_to_user(self.domain, self.web_user)
+#        #       .all() & SQLLocation.objects.get_locations_and_children(...)
+#        # maybe more
+#        ...
+
+#    def ancestors(self, ascending=False, include_self=False):
+#        return self.objects.raw("""
+#            WITH RECURSIVE _recursive_query AS (
+#                SELECT _tree.*, 1 AS _level
+#                FROM "{table}" AS _tree
+#                WHERE id = %(id)s
+#                UNION ALL
+#                SELECT _tree_parent.*, _level + 1
+#                FROM _recursive_query
+#                JOIN "{table}" AS _tree_parent
+#                    ON _tree_parent.id = _recursive_query.parent_id
+#            )
+#            SELECT * FROM _recursive_query
+#            {where}
+#            ORDER BY _level {order}
+#        """.format(
+#            table=self._meta.db_table,
+#            where=("" if include_self else "WHERE _recursive_query.id != %(id)s"),
+#            order=("ASC" if ascending else "DESC"),
+#        ), {"id": self.id})
+
+#    def descendants(self, include_self=False):
+#        raw = self.objects.raw("""
+#            WITH RECURSIVE _recursive_query AS (
+#                SELECT _tree.*
+#                FROM "{table}" AS _tree
+#                WHERE id = %(id)s
+#                UNION ALL
+#                SELECT _tree_children.*
+#                FROM _recursive_query
+#                JOIN "{table}" AS _tree_children
+#                    ON _tree_children.parent_id = _recursive_query.id
+#            )
+#            SELECT * FROM _recursive_query
+#            {where}
+#        """.format(
+#            table=self._meta.db_table,
+#            where=("" if include_self else "WHERE _recursive_query.id != %(id)s"),
+#        ), {"id": self.id})
+#        return models.query.QuerySet(type(self), raw)
+
 
 class ALModel(MPTTModel):
     """Base class for tree models implemented with adjacency list pattern
@@ -71,6 +184,8 @@ class ALModel(MPTTModel):
     """
 
     _cte_node_parent = 'parent'
+    #parent = ForeignKey('self', on_delete=CASCADE, null=True, blank=True,
+    #                    related_name='children')
 
     objects = ALManager()
 
@@ -86,6 +201,23 @@ class ALModel(MPTTModel):
 
     def get_descendants(self, include_self=False):
         return type(self).objects.get_descendants(self, include_self)
+
+#    def _mptt_is_obsolete(self, *args, **kw):
+#        raise NotImplementedError("MPTTModel method not implemented")
+#
+#    # methods of MPTTModel not referenced in HQ
+#    # can be removed once this model no longer inherits from MPTTModel
+#    get_descendant_count = _mptt_is_obsolete
+#    get_family = _mptt_is_obsolete
+#    get_next_sibling = _mptt_is_obsolete
+#    get_previous_sibling = _mptt_is_obsolete
+#    get_root = _mptt_is_obsolete
+#    get_siblings = _mptt_is_obsolete
+#    #insert_at = _mptt_is_obsolete
+#    is_child_node = _mptt_is_obsolete
+#    is_leaf_node = _mptt_is_obsolete
+#    #is_root_node = _mptt_is_obsolete
+#    move_to = _mptt_is_obsolete
 
 
 class ALCompiler(CTECompiler):
@@ -116,6 +248,10 @@ class ALCompiler(CTECompiler):
         cte = cls.ADJACENCY_LIST_SQL % frags
         compiler = type("DynamicALCompiler", (CTECompiler,), {"CTE": cte})
         sql, params = compiler.generate_sql(connection, query, as_sql)
+
+        # TODO remove print
+        print(sql, '\n', cte_params, params)
+
         # possibly fragile: concatenate cte_params with params
         return sql, cte_params + params
 
