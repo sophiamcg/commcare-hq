@@ -254,10 +254,16 @@ def get_patient(domain, requests, info, openmrs_config, problem_log):
         # ID matchers did not match a patient in OpenMRS.
         if openmrs_config.patient_finder:
             # Search for patients based on other case properties
+            logger.debug(
+                'Case %(case_id)s did not match patient with OpenmrsCaseConfig.id_matchers. Search using '
+                'OpenmrsConfig.patient_finder "%(finder)s"',
+                case_id=info.case_id,
+                finder=openmrs_config.patient_finder
+            )
             patient = find_patient(domain, requests, info.case_id, openmrs_config)
 
     if not patient:
-        problem_log.append("Could not find patient matching case")
+        problem_log.append("Could not find patient matching case {}".format(info.case_id))
         return
 
     return patient

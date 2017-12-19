@@ -36,6 +36,9 @@ def send_openmrs_data(domain, requests, form_json, openmrs_config, case_trigger_
                 logger.debug('Yes')
                 send_openmrs_visit(requests, info, form_config, person_uuid, provider_uuid,
                                    visit_datetime=string_to_utc_datetime(form_json['form']['meta']['timeEnd']))
+    if problem_log:
+        for problem in problem_log:
+            logger.error('Error sending data to OpenMRS: %s', problem)
 
 
 def send_openmrs_visit(requests, info, form_config, person_uuid, provider_uuid, visit_datetime):
